@@ -1,47 +1,16 @@
+# ECS Cluster
 resource "aws_ecs_cluster" "this" {
   name = var.cluster_name
 }
 
-resource "aws_iam_role" "ecs_task_execution" {
-  name = "${var.cluster_name}-exec-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = { Service = "ecs-tasks.amazonaws.com" }
-      Action = "sts:AssumeRole"
-    }]
-  })
+# Random suffix for SG name to avoid duplicates
+resource "random_id" "sg_suffix" {
+  byte_length = 2
 }
 
-resource "aws_iam_role_policy_attachment" "ecs_task_execution_policy" {
-  role       = aws_iam_role.ecs_task_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-}
-
-resource "aws_ecs_task_definition" "this" {
-  family                   = var.cluster_name
-  requires_compatibilities = ["FARGATE"]
-  network_mode             = "awsvpc"
-  cpu                      = "512"
-  memory                   = "1024"
-  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
-
-  container_definitions = jsonencode([
-    {
-      name  = "strapi"
-      image = var.image_url
-      portMappings = [{
-        containerPort = 1337
-        hostPort      = 1337
-      }]
-    }
-  ])
-}
-
+# Security Group
 resource "aws_security_group" "ecs" {
-  name   = "${var.cluster_name}-sg"
+  name   = "${var.cluster_name}-sg-${random_id.sg_suffix.hex}"
   vpc_id = var.vpc_id
 
   ingress {
@@ -59,6 +28,31 @@ resource "aws_security_group" "ecs" {
   }
 }
 
+# ECS Task Definition
+resource "aws_ecs_task_definition" "this" {
+  family                   = var.cluster_name
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "512"
+  memory                   = "1024"
+  execution_role_arn       = var.ecs_execution_role_arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "strapi-app"
+      image     = var.ecr_image_url
+      essential = true
+      portMappings = [
+        {
+          containerPort = 1337
+          protocol      = "tcp"
+        }
+      ]
+    }
+  ])
+}
+
+# ECS Service using Fargate Spot
 resource "aws_ecs_service" "this" {
   name            = var.cluster_name
   cluster         = aws_ecs_cluster.this.id
@@ -76,4 +70,6 @@ resource "aws_ecs_service" "this" {
     capacity_provider = "FARGATE_SPOT"
     weight            = 1
   }
+
+  depends_on = [aws_ecs_task_definition.this]
 }
