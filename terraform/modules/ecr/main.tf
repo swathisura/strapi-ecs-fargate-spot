@@ -1,13 +1,14 @@
 resource "aws_ecr_repository" "this" {
-  name = var.repo_name
+  name         = var.repo_name
+  image_tag_mutability = "MUTABLE"
 
   image_scanning_configuration {
     scan_on_push = true
   }
 
-  image_tag_mutability = "MUTABLE"
+  tags = merge(var.common_tags, { Name = var.repo_name })
+}
 
-  tags = merge(var.common_tags, {
-    Name = var.repo_name
-  })
+output "repository_url" {
+  value = aws_ecr_repository.this.repository_url
 }
