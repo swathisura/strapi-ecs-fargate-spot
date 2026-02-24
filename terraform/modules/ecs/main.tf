@@ -3,14 +3,29 @@ resource "aws_ecs_cluster" "this" {
   name = var.cluster_name
 }
 
-# Random suffix for SG name to avoid duplicates
-resource "random_id" "sg_suffix" {
-  byte_length = 2
+# Task Definition
+resource "aws_ecs_task_definition" "this" {
+  family                   = var.cluster_name
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "512"
+  memory                   = "1024"
+  execution_role_arn       = var.ecs_execution_role_arn
+
+  container_definitions = jsonencode([{
+    name      = "strapi-app"
+    image     = var.ecr_image_url
+    essential = true
+    portMappings = [{
+      containerPort = 1337
+      protocol      = "tcp"
+    }]
+  }])
 }
 
 # Security Group
 resource "aws_security_group" "ecs" {
-  name   = "${var.cluster_name}-sg-${random_id.sg_suffix.hex}"
+  name   = "${var.cluster_name}-sg"
   vpc_id = var.vpc_id
 
   ingress {
@@ -28,37 +43,13 @@ resource "aws_security_group" "ecs" {
   }
 }
 
-# ECS Task Definition
-resource "aws_ecs_task_definition" "this" {
-  family                   = var.cluster_name
-  requires_compatibilities = ["FARGATE"]
-  network_mode             = "awsvpc"
-  cpu                      = "512"
-  memory                   = "1024"
-  execution_role_arn       = var.ecs_execution_role_arn
-
-  container_definitions = jsonencode([
-    {
-      name      = "strapi-app"
-      image     = var.ecr_image_url
-      essential = true
-      portMappings = [
-        {
-          containerPort = 1337
-          protocol      = "tcp"
-        }
-      ]
-    }
-  ])
-}
-
-# ECS Service using Fargate Spot
+# ECS Service with Fargate Spot
 resource "aws_ecs_service" "this" {
   name            = var.cluster_name
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.this.arn
   desired_count   = 1
-  
+
   network_configuration {
     subnets          = var.subnets
     security_groups  = [aws_security_group.ecs.id]
