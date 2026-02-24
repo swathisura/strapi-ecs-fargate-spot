@@ -1,4 +1,4 @@
-name: Swatho Strapi Deploy
+name: Deploy Strapi to ECS Fargate Spot
 
 on:
   push:
@@ -6,66 +6,49 @@ on:
       - main
 
 env:
-  AWS_REGION: us-east-1
-  TF_DIR: terraform
+  AWS_REGION: us-east-1            # Change if needed
+  ECR_REPO: swatho-strapi-app      # Your ECR repo name
+  ECS_CLUSTER: swathi-strapi       # ECS cluster name
+  ECS_SERVICE: swathi-strapi       # ECS service name
+  CONTAINER_NAME: strapi-app
+  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      # -------- Ensure Terraform State Bucket --------
-      - name: Create S3 bucket if not exists
-        run: |
-          aws s3api head-bucket --bucket swatho-terraform-state 2>/dev/null || \
-          aws s3 mb s3://swatho-terraform-state --region $AWS_REGION
-
-      # -------- Terraform --------
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Terraform Init
-        working-directory: ${{ env.TF_DIR }}
-        run: terraform init
-
-      - name: Terraform Apply
-        working-directory: ${{ env.TF_DIR }}
-        run: terraform apply -auto-approve
-
-      - name: Get ECR Repo URL
-        id: ecr
-        working-directory: ${{ env.TF_DIR }}
-        run: |
-          ECR_URL=$(terraform output -raw ecr_repository_url)
-          echo "ecr_url=$ECR_URL" >> $GITHUB_OUTPUT
-
-      # -------- Login to ECR --------
       - name: Login to Amazon ECR
-        run: |
-          aws ecr get-login-password --region $AWS_REGION \
-          | docker login --username AWS --password-stdin ${{ steps.ecr.outputs.ecr_url }}
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v1
 
-      # -------- Build Docker Image --------
-      - name: Build Docker Image
+      - name: Build Docker image
         run: |
-          docker build -t strapi-app ./strapi-app
+          docker build -t $ECR_REPO:$IMAGE_TAG ./strapi-app
 
-      # -------- Tag Image --------
-      - name: Tag Docker Image
+      - name: Tag Docker image for ECR
         run: |
-          docker tag strapi-app:latest ${{ steps.ecr.outputs.ecr_url }}:latest
+          docker tag $ECR_REPO:$IMAGE_TAG ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:$IMAGE_TAG
 
-      # -------- Push Image --------
-      - name: Push Docker Image
+      - name: Push Docker image to ECR
         run: |
-          docker push ${{ steps.ecr.outputs.ecr_url }}:latest
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:$IMAGE_TAG
+
+      - name: Update ECS service with new image
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --force-new-deployment \
+            --region $AWS_REGION \
+            --output table
