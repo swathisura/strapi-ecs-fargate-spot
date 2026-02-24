@@ -4,11 +4,8 @@ module "ecr" {
   repo_name   = var.ecr_repo_name
   common_tags = var.common_tags
 }
-module "ecr" {
-  source = "./modules/ecr"
-}
 
-# Use default VPC data
+# Default VPC
 data "aws_vpc" "default" {
   default = true
 }
